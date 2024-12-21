@@ -218,6 +218,6 @@ if __name__ == "__main__":
     torch.manual_seed(config.training.seed)
 
     WORLD_SIZE = torch.cuda.device_count()
-    N_PROC = 6
+    N_PROC = WORLD_SIZE
     mp.spawn(fsdp_main, args=(N_PROC, config.training), nprocs=N_PROC, join=True)
 # %%
