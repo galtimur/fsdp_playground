@@ -1,5 +1,6 @@
 # %%
 # Based on: https://github.com/pytorch/examples/blob/master/mnist/main.py
+import functools
 import os
 
 import torch
@@ -8,10 +9,10 @@ import torch.multiprocessing as mp
 from datasets import load_dataset
 from omegaconf import OmegaConf
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
-from transformers import (AutoModelForCausalLM, AutoTokenizer,
-                          default_data_collator)
+from transformers import AutoModelForCausalLM, AutoTokenizer, default_data_collator
 
 
 # %% md
@@ -20,10 +21,6 @@ from transformers import (AutoModelForCausalLM, AutoTokenizer,
 def setup(rank, world_size):
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["MASTER_PORT"] = "12355"
-
-    # os.environ["NCCL_DEBUG"] = "INFO"
-    # os.environ["NCCL_SOCKET_IFNAME"] = "lo"
-
     # initialize the process group
     dist.init_process_group("nccl", rank=rank, world_size=world_size)
 
@@ -149,6 +146,9 @@ def fsdp_main(rank, world_size, args):
     train_loader, test_loader, train_sampler = prepare_dataset(
         rank, world_size, args, tokenizer
     )
+    my_auto_wrap_policy = functools.partial(
+        size_based_auto_wrap_policy, min_num_params=10_000_000
+    )
 
     torch.cuda.set_device(rank)
 
@@ -171,7 +171,9 @@ def fsdp_main(rank, world_size, args):
     #     device_id=torch.cuda.current_device(),
     # )
 
-    model = FSDP(model, **fsdp_config)  # , **fsdp_config
+    model = FSDP(
+        model, auto_wrap_policy=my_auto_wrap_policy, **fsdp_config
+    )  # , **fsdp_config
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
 
