@@ -24,7 +24,7 @@ from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from transformers import (
     T5ForConditionalGeneration,
-    T5Tokenizer,
+    T5Tokenizer, AutoModelForCausalLM, AutoTokenizer,
 )
 from transformers.models.t5.modeling_t5 import T5Block
 
@@ -48,9 +48,16 @@ def cleanup():
 
 # 2.1 Set up the HuggingFace T5 model and some helper functions
 # %%
-def setup_model(model_name):
-    model = T5ForConditionalGeneration.from_pretrained(model_name)
-    tokenizer = T5Tokenizer.from_pretrained(model_name)
+def setup_model(model_name: str):
+    if model_name.startswith("t5"):
+        model = T5ForConditionalGeneration.from_pretrained(model_name)
+        tokenizer = T5Tokenizer.from_pretrained(model_name)
+    else:
+        model = AutoModelForCausalLM.from_pretrained(model_name)
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token = tokenizer.eos_token
+        tokenizer.pad_token_id = tokenizer.eos_token_id
     return model, tokenizer
 
 
@@ -94,8 +101,8 @@ def save_model(rank, model, file_save_name, epoch, curr_val_loss, time_of_run):
 
 
 def get_data(rank, world_size, args, tokenizer):
-    train_dataset = wikihow(args.data.folder, tokenizer, "train", 1500, 512, 150, False)
-    val_dataset = wikihow(args.data.folder, tokenizer, "test", 1000, 512, 150, False)
+    train_dataset = wikihow(args.data.folder, tokenizer, "train", 150, 512, 150, False)
+    val_dataset = wikihow(args.data.folder, tokenizer, "test", 100, 512, 150, False)
 
     sampler_train = DistributedSampler(
         train_dataset, rank=rank, num_replicas=world_size, shuffle=True
@@ -141,7 +148,7 @@ fp32_policy = MixedPrecision(
 
 # %%
 
-def train(model, rank, train_loader, optimizer, epoch, sampler=None):
+def train(model, rank, train_loader, optimizer, epoch, sampler=None, task="causal"):
     model.train()
     local_rank = int(os.environ["LOCAL_RANK"])
     fsdp_loss = torch.zeros(2).to(local_rank)
@@ -157,10 +164,14 @@ def train(model, rank, train_loader, optimizer, epoch, sampler=None):
         for key in batch.keys():
             batch[key] = batch[key].to(local_rank)
         optimizer.zero_grad()
+        if task == "causal":
+            labels = batch["source_ids"]
+        elif task == "cls":
+            labels = batch["target_ids"]
         output = model(
             input_ids=batch["source_ids"],
             attention_mask=batch["source_mask"],
-            labels=batch["target_ids"],
+            labels=labels,
         )
         loss = output["loss"]
         loss.backward()
@@ -183,7 +194,7 @@ def train(model, rank, train_loader, optimizer, epoch, sampler=None):
 # %%
 
 
-def validation(model, rank, world_size, val_loader):
+def validation(model, rank, val_loader, task="causal"):
     model.eval()
     correct = 0
     local_rank = int(os.environ["LOCAL_RANK"])
@@ -196,10 +207,14 @@ def validation(model, rank, world_size, val_loader):
         for batch in val_loader:
             for key in batch.keys():
                 batch[key] = batch[key].to(local_rank)
+            if task == "causal":
+                labels = batch["source_ids"]
+            elif task == "cls":
+                labels = batch["target_ids"]
             output = model(
                 input_ids=batch["source_ids"],
                 attention_mask=batch["source_mask"],
-                labels=batch["target_ids"],
+                labels=labels,
             )
             fsdp_loss[0] += output["loss"].item()  # sum up batch loss
             fsdp_loss[1] += len(batch)
@@ -233,11 +248,16 @@ def fsdp_main(args):
     )
 
     # Pecularity of T5 - shared in and out embedding matrices, so, we prevent their splitting.
+    if args.training.model_name.startswith("t5"):
+        shared_layers = {T5Block}
+        task = "cls"
+    else:
+        shared_layers = {}
+        task = "causal"
+
     t5_auto_wrap_policy = functools.partial(
         transformer_auto_wrap_policy,
-        transformer_layer_cls={
-            T5Block,
-        },
+        transformer_layer_cls=shared_layers,
     )
     # sharding_strategy = (
     #     ShardingStrategy.SHARD_GRAD_OP
@@ -286,9 +306,10 @@ def fsdp_main(args):
             optimizer,
             epoch,
             sampler=sampler_train,
+            task = task
         )
         if args.features.run_validation:
-            curr_val_loss = validation(model, rank, world_size, val_loader)
+            curr_val_loss = validation(model, rank, val_loader, task = task)
         scheduler.step()
 
         if rank == 0:
@@ -326,8 +347,8 @@ def fsdp_main(args):
 # %%
 
 if __name__ == "__main__":
-    config = OmegaConf.load("configs/t5.yaml")
-
+    config = OmegaConf.load("configs/config.yaml")
+    print(config.training.model_name)
     torch.manual_seed(config.training.seed)
     fsdp_main(config)
 
