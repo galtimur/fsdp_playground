@@ -215,7 +215,7 @@ def fsdp_main(rank, world_size, args):
 
 
 if __name__ == "__main__":
-    config = OmegaConf.load("configs/config.yaml")
+    config = OmegaConf.load("configs/config_old.yaml")
 
     torch.manual_seed(config.training.seed)
 
