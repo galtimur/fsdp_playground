@@ -1,37 +1,28 @@
+### Script for distributed training using torchrun
+# to run the script:
+# torchrun --nnodes 1 --nproc_per_node 8 fsdp_playground_T5.py
+#
+
+
 # %%
-import argparse
 import functools
 import os
 import time
 from datetime import datetime
-from functools import partial
-from pathlib import Path
-from typing import Type
 
 import torch
 import torch.distributed as dist
-import torch.multiprocessing as mp
-import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
 import tqdm
-from datasets import load_dataset
 from omegaconf import OmegaConf
-from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
-    CheckpointImpl,
-    checkpoint_wrapper,
-)
-from torch.distributed.fsdp import BackwardPrefetch, FullStateDictConfig
+from torch.distributed.fsdp import FullStateDictConfig
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import MixedPrecision, ShardingStrategy, StateDictType
-from torch.distributed.fsdp.wrap import enable_wrap, transformer_auto_wrap_policy, wrap
-from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
 from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from transformers import (
-    AutoTokenizer,
-    GPT2TokenizerFast,
     T5ForConditionalGeneration,
     T5Tokenizer,
 )
@@ -39,8 +30,10 @@ from transformers.models.t5.modeling_t5 import T5Block
 
 from summarization_dataset import wikihow
 
-# %% md
-# 1.4 Distributed training setup. Here we use two helper functions to initialize the processes for distributed training, and then to clean up after training completion. In this tutorial, we are going to use torch elastic, using torchrun , which will set the worker RANK and WORLD_SIZE automatically.
+# 1.4 Distributed training setup. Here we use two helper functions to initialize the processes for distributed training,
+# and then to clean up after training completion. In this tutorial, we are going to use torch elastic, using torchrun ,
+# which will set the worker RANK and WORLD_SIZE automatically.
+# Otherwise you can setup env variables manually:
 # %%
 # def setup():
 #     # initialize the process group
@@ -53,10 +46,7 @@ def cleanup():
     dist.destroy_process_group()
 
 
-# %% md
 # 2.1 Set up the HuggingFace T5 model and some helper functions
-#
-#
 # %%
 def setup_model(model_name):
     model = T5ForConditionalGeneration.from_pretrained(model_name)
@@ -123,10 +113,9 @@ def get_data(rank, world_size, args, tokenizer):
 
     return train_loader, val_loader, sampler_train
 
-
 # %%
 
-fpSixteen = MixedPrecision(
+fp16_policy = MixedPrecision(
     param_dtype=torch.float16,
     # Gradient communication precision.
     reduce_dtype=torch.float16,
@@ -134,7 +123,7 @@ fpSixteen = MixedPrecision(
     buffer_dtype=torch.float16,
 )
 
-bfSixteen = MixedPrecision(
+bf16_policy = MixedPrecision(
     param_dtype=torch.bfloat16,
     # Gradient communication precision.
     reduce_dtype=torch.bfloat16,
@@ -152,12 +141,12 @@ fp32_policy = MixedPrecision(
 
 # %%
 
-
-def train(args, model, rank, world_size, train_loader, optimizer, epoch, sampler=None):
+def train(model, rank, train_loader, optimizer, epoch, sampler=None):
     model.train()
     local_rank = int(os.environ["LOCAL_RANK"])
     fsdp_loss = torch.zeros(2).to(local_rank)
 
+    # TODO Why to do it for separate sampler but not do train_loader.sampler ?
     if sampler:
         sampler.set_epoch(epoch)
     if rank == 0:
@@ -181,6 +170,7 @@ def train(args, model, rank, world_size, train_loader, optimizer, epoch, sampler
         if rank == 0:
             pbar.update(1)
 
+    # Gather all losses
     dist.all_reduce(fsdp_loss, op=dist.ReduceOp.SUM)
     train_accuracy = fsdp_loss[0] / fsdp_loss[1]
 
@@ -197,7 +187,7 @@ def validation(model, rank, world_size, val_loader):
     model.eval()
     correct = 0
     local_rank = int(os.environ["LOCAL_RANK"])
-    fsdp_loss = torch.zeros(3).to(local_rank)
+    fsdp_loss = torch.zeros(2).to(local_rank)
     if rank == 0:
         pbar = tqdm.tqdm(
             range(len(val_loader)), colour="green", desc="Validation Epoch"
@@ -230,31 +220,34 @@ def validation(model, rank, world_size, val_loader):
 
 def fsdp_main(args):
 
-    model, tokenizer = setup_model("t5-base")
+    model, tokenizer = setup_model(args.training.model_name)
 
     local_rank = int(os.environ["LOCAL_RANK"])
     rank = int(os.environ["RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
     # setup()
 
+    # Gets distributed data sampler that distribute data for GPUs (defined by rank variable)
     train_loader, val_loader, sampler_train = get_data(
         rank, world_size, args, tokenizer
     )
 
+    # Pecularity of T5 - shared in and out embedding matrices, so, we prevent their splitting.
     t5_auto_wrap_policy = functools.partial(
         transformer_auto_wrap_policy,
         transformer_layer_cls={
             T5Block,
         },
     )
-    sharding_strategy = (
-        ShardingStrategy.SHARD_GRAD_OP
-    )  # for Zero2 and FULL_SHARD for Zero3
+    # sharding_strategy = (
+    #     ShardingStrategy.SHARD_GRAD_OP
+    # )  # for Zero2 and FULL_SHARD for Zero3
     torch.cuda.set_device(local_rank)
 
-    mp_policy = bfSixteen
+    mp_policy = bf16_policy
     # mp_policy = None # defaults to fp32
 
+    # Establishes GPU connection and processes
     dist.init_process_group("nccl")
     # model is on CPU before input to FSDP
     model = FSDP(
@@ -263,6 +256,7 @@ def fsdp_main(args):
         mixed_precision=mp_policy,
         # sharding_strategy=sharding_strategy,
         device_id=torch.cuda.current_device(),
+        # backward_prefetch=BackwardPrefetch.BACKWARD_PRE
     )
 
     optimizer = optim.AdamW(model.parameters(), lr=args.training.lr)
@@ -286,10 +280,8 @@ def fsdp_main(args):
     for epoch in range(1, args.training.epochs + 1):
         t0 = time.time()
         train_accuracy = train(
-            args,
             model,
             rank,
-            world_size,
             train_loader,
             optimizer,
             epoch,

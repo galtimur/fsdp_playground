@@ -1,4 +1,5 @@
 training:
+  model_name: "t5-3b" # "t5-base"
   batch_size: 4  # input batch size for training
   test_batch_size: 4  # input batch size for testing
   epochs: 2  # number of epochs to train
