@@ -1,0 +1,27 @@
+[tool.poetry]
+name = "fsdp-playground"
+version = "0.1.0"
+description = ""
+authors = ["galtimur <gal_timur@yahoo.com>"]
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.12"
+tqdm = "^4.67.1"
+omegaconf = "^2.3.0"
+transformers = "^4.48.0"
+torch = {version = "^2.5.1+cu121", source = "pytorch-gpu-src"}
+torchvision = {version = "^0.20.1+cu121", source = "pytorch-gpu-src"}
+torchaudio = {version = "^2.5.1+cu121", source = "pytorch-gpu-src"}
+datasets = "^3.2.0"
+sentencepiece = "^0.2.0"
+
+
+[[tool.poetry.source]]
+name = "pytorch-gpu-src"
+url = "https://download.pytorch.org/whl/cu121"
+priority = "explicit"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
