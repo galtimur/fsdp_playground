@@ -1,14 +1,15 @@
 training:
-  model_name: "meta-llama/Llama-3.2-3B" # "t5-base" "t5-3b" "meta-llama/Llama-3.2-1B"
-  batch_size: 1  # input batch size for training
-  test_batch_size: 1  # input batch size for testing
+  model_name: "t5-3b" # "t5-base" "t5-3b" "meta-llama/Llama-3.2-1B"
+  batch_size: 4  # input batch size for training
+  test_batch_size: 4  # input batch size for testing
   epochs: 2  # number of epochs to train
   lr: 0.002  # learning rate
   gamma: 0.7  # Learning rate step gamma
   no_cuda: false  # disables CUDA training
   seed: 1  # random seed
 data:
-  folder: "/mnt/data/galimzyanov/temp"
+  # folder: "/mnt/data/galimzyanov/temp"
+  folder: "data"
 features:
   track_memory: true  # track the gpu memory
   run_validation: true  # running the validation
