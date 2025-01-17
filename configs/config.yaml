@@ -1,7 +1,9 @@
 training:
-  model_name: "t5-3b" # "t5-base" "t5-3b" "meta-llama/Llama-3.2-1B"
-  batch_size: 4  # input batch size for training
-  test_batch_size: 4  # input batch size for testing
+  model_name: "meta-llama/Llama-3.2-3B-Instruct"
+  # "t5-base" "t5-3b" "meta-llama/Llama-3.2-1B" "meta-llama/Llama-3.2-1B-Instruct"
+  # "meta-llama/Llama-3.2-3B-Instruct"
+  batch_size: 1  # input batch size for training
+  test_batch_size: 1  # input batch size for testing
   epochs: 2  # number of epochs to train
   lr: 0.002  # learning rate
   gamma: 0.7  # Learning rate step gamma

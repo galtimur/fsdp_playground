@@ -1,0 +1,57 @@
+batch_size: 4
+checkpointer:
+  _component_: torchtune.training.FullModelHFCheckpointer
+  checkpoint_dir: /mnt/data/galimzyanov/temp/torchtune/llama3_2_3B_full/model
+  checkpoint_files:
+  - model-00001-of-00002.safetensors
+  - model-00002-of-00002.safetensors
+  model_type: LLAMA3_2
+  output_dir: /mnt/data/galimzyanov/temp/torchtune/llama3_2_3B_full/chkpts
+  recipe_checkpoint: null
+compile: false
+dataset:
+  _component_: torchtune.datasets.cnn_dailymail_articles_dataset
+  trust_remote_code: true
+device: cuda
+dtype: bf16
+enable_activation_checkpointing: true
+enable_activation_offloading: false
+epochs: 1
+gradient_accumulation_steps: 8
+log_every_n_steps: 1
+log_peak_memory_stats: true
+loss:
+  _component_: torchtune.modules.loss.CEWithChunkedOutputLoss
+max_steps_per_epoch: null
+metric_logger:
+  _component_: torchtune.training.metric_logging.DiskLogger
+  log_dir: /mnt/data/galimzyanov/temp/torchtune/llama3_2_3B_full/logs
+model:
+  _component_: torchtune.models.llama3_2.llama3_2_3b
+optimizer:
+  _component_: torch.optim.AdamW
+  fused: true
+  lr: 2.0e-05
+optimizer_in_bwd: false
+output_dir: /mnt/data/galimzyanov/temp/torchtune/llama3_2_3B_full
+profiler:
+  _component_: torchtune.training.setup_torch_profiler
+  active_steps: 2
+  cpu: true
+  cuda: true
+  enabled: false
+  num_cycles: 1
+  output_dir: /mnt/data/galimzyanov/temp/torchtune/llama3_2_3B_full/profiling_outputs
+  profile_memory: false
+  record_shapes: true
+  wait_steps: 5
+  warmup_steps: 3
+  with_flops: false
+  with_stack: false
+resume_from_checkpoint: false
+seed: null
+shuffle: true
+tokenizer:
+  _component_: torchtune.models.llama3.llama3_tokenizer
+  max_seq_len: null
+  path: /mnt/data/galimzyanov/temp/torchtune/llama3_2_3B_full/model/original/tokenizer.model
